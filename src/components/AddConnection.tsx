@@ -30,41 +30,46 @@ const AddConnection = ({ onConnectionAdded, userEmail, userName }: AddConnection
     }));
   };
 
+  const validateAndEnsureNameExists = async (name: string, instagram: string, personNumber: number) => {
+    if (!name.trim()) return;
+    
+    // Check if name already exists
+    const { data: existingName } = await supabase
+      .from('names')
+      .select('id')
+      .eq('name', name.trim())
+      .maybeSingle();
+
+    if (!existingName) {
+      // Se o nome não existe no banco e não foi fornecido Instagram, retorna erro
+      if (!instagram.trim()) {
+        throw new Error(`Para adicionar "${name.trim()}" pela primeira vez, é necessário informar o Instagram também.`);
+      }
+      
+      // Insert new name with Instagram
+      const { error: nameError } = await supabase
+        .from('names')
+        .insert([{
+          name: name.trim(),
+          instagram: instagram.trim()
+        }]);
+
+      if (nameError) {
+        console.error('Error inserting name:', nameError);
+        throw nameError;
+      }
+    }
+    // Se o nome já existe, não precisa fazer nada adicional
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
 
     try {
-      // Helper function to check/insert name
-      const ensureNameExists = async (name: string, instagram: string) => {
-        if (!name.trim()) return;
-        
-        // Check if name already exists
-        const { data: existingName } = await supabase
-          .from('names')
-          .select('id')
-          .eq('name', name.trim())
-          .maybeSingle();
-
-        if (!existingName) {
-          // Insert new name (without specifying ID, it's auto-generated)
-          const { error: nameError } = await supabase
-            .from('names')
-            .insert([{
-              name: name.trim(),
-              instagram: instagram.trim() || null
-            }]);
-
-          if (nameError) {
-            console.error('Error inserting name:', nameError);
-            throw nameError;
-          }
-        }
-      };
-
-      // Ensure both names exist in the names table
-      await ensureNameExists(formData.person1Name, formData.person1Instagram);
-      await ensureNameExists(formData.person2Name, formData.person2Instagram);
+      // Validate and ensure both names exist in the names table
+      await validateAndEnsureNameExists(formData.person1Name, formData.person1Instagram, 1);
+      await validateAndEnsureNameExists(formData.person2Name, formData.person2Instagram, 2);
 
       // Get the current user's name from user_metadata or fallback to email
       const { data: { user } } = await supabase.auth.getUser();
@@ -121,11 +126,21 @@ const AddConnection = ({ onConnectionAdded, userEmail, userName }: AddConnection
       onConnectionAdded();
     } catch (error) {
       console.error('Error creating connection:', error);
-      toast({
-        title: "Erro",
-        description: "Ocorreu um erro inesperado.",
-        variant: "destructive",
-      });
+      
+      // Check if it's our custom validation error
+      if (error instanceof Error && error.message.includes('é necessário informar o Instagram')) {
+        toast({
+          title: "Instagram obrigatório",
+          description: error.message,
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Erro",
+          description: "Ocorreu um erro inesperado.",
+          variant: "destructive",
+        });
+      }
     } finally {
       setLoading(false);
     }
@@ -140,6 +155,10 @@ const AddConnection = ({ onConnectionAdded, userEmail, userName }: AddConnection
         </div>
         <CardDescription>
           Conte para todos sobre uma conexão que rolou! Essa conexão será revisada por um admin antes de aparecer na rede.
+          <br />
+          <span className="text-sm text-muted-foreground mt-1 block">
+            * Se a pessoa ainda não está no sistema, o Instagram é obrigatório.
+          </span>
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -166,7 +185,7 @@ const AddConnection = ({ onConnectionAdded, userEmail, userName }: AddConnection
               </div>
               
               <div className="space-y-2">
-                <Label htmlFor="person1Instagram">Instagram *</Label>
+                <Label htmlFor="person1Instagram">Instagram</Label>
                 <div className="relative">
                   <Instagram className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
                   <Input
@@ -177,7 +196,6 @@ const AddConnection = ({ onConnectionAdded, userEmail, userName }: AddConnection
                     value={formData.person1Instagram}
                     onChange={handleInputChange}
                     className="pl-10"
-                    required
                   />
                 </div>
               </div>
@@ -204,7 +222,7 @@ const AddConnection = ({ onConnectionAdded, userEmail, userName }: AddConnection
               </div>
               
               <div className="space-y-2">
-                <Label htmlFor="person2Instagram">Instagram *</Label>
+                <Label htmlFor="person2Instagram">Instagram</Label>
                 <div className="relative">
                   <Instagram className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
                   <Input
@@ -215,7 +233,6 @@ const AddConnection = ({ onConnectionAdded, userEmail, userName }: AddConnection
                     value={formData.person2Instagram}
                     onChange={handleInputChange}
                     className="pl-10"
-                    required
                   />
                 </div>
               </div>
