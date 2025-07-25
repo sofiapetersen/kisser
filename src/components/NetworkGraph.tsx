@@ -173,11 +173,11 @@ const NetworkGraph = ({ refreshTrigger }: NetworkGraphProps) => {
         {
           selector: 'node',
           style: {
-            'background-color': 'hsl(336, 84%, 65%)',
+            'background-color': '#fe6285',
             'label': 'data(label)',
             'text-valign': 'center',
             'text-halign': 'center',
-            'color': 'hsl(340, 82%, 30%)',
+            'color': '#9b0c2f',
             'font-size': (ele: any) => {
               const connections = ele.data('connections') || 0;
               return Math.max(10, 8 + connections * 1.5) + 'px';

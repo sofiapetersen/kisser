@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
-import { Heart, LogOut, Plus, Shield, User as UserIcon, ChevronDown, Settings } from 'lucide-react';
+import { Heart, LogOut, Plus, Shield, User as UserIcon, ChevronDown, Settings, Target } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import NetworkGraph from '@/components/NetworkGraph';
 import Auth from '@/components/Auth';
@@ -133,122 +133,144 @@ const Index = () => {
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-2">
-              <img src="/logo.png" alt="Logo Kisser" className="h-8" />
+              <a href="/"><img src="/logo.png" alt="Logo Kisser" className="h-8" /></a>
             </div>
             
-            <div className="flex items-center space-x-2">
-              {user ? (
-                <>
-                  {/* User Dropdown */}
-                  <div className="relative" ref={dropdownRef}>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setShowUserDropdown(!showUserDropdown)}
-                      className="hidden sm:flex items-center space-x-2"
-                    >
-                      <span className="text-sm text-muted-foreground">
-                        Olá, {user.user_metadata?.name || user.email}!
-                      </span>
-                      <ChevronDown className="w-4 h-4" />
-                    </Button>
+            {/* Navigation Links */}
+            <div className="flex items-center space-x-4">
+              <div className="flex items-center space-x-2">
+                {user ? (
+                  <>
+                    {/* User Dropdown */}
+                    <div className="relative" ref={dropdownRef}>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setShowUserDropdown(!showUserDropdown)}
+                        className="hidden sm:flex items-center space-x-2"
+                      >
+                        <span className="text-sm text-muted-foreground">
+                          Olá, {user.user_metadata?.name || user.email}!
+                        </span>
+                        <ChevronDown className="w-4 h-4" />
+                      </Button>
 
-                    {/* Mobile user button */}
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setShowUserDropdown(!showUserDropdown)}
-                      className="sm:hidden"
-                    >
-                      <UserIcon className="w-4 h-4" />
-                    </Button>
+                      {/* Mobile user button */}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setShowUserDropdown(!showUserDropdown)}
+                        className="sm:hidden"
+                      >
+                        <UserIcon className="w-4 h-4" />
+                      </Button>
 
-                    {/* Dropdown Menu */}
-                    {showUserDropdown && (
-                      <div className="absolute right-0 mt-2 w-48 bg-card border rounded-md shadow-lg z-50">
-                        <div className="py-1">
-                          <div className="px-3 py-2 text-sm text-muted-foreground border-b sm:hidden">
-                            {user.user_metadata?.name || user.email}
-                          </div>
-                          <button
-                            onClick={() => {
-                              setShowProfile(true);
-                              setShowUserDropdown(false);
-                            }}
-                            className="flex items-center w-full px-3 py-2 text-sm hover:bg-secondary transition-colors"
-                          >
-                            <Settings className="w-4 h-4 mr-2" />
-                            Meu Perfil
-                          </button>
-                          {isAdmin && (
+                      {/* Dropdown Menu */}
+                      {showUserDropdown && (
+                        <div className="absolute right-0 mt-2 w-48 bg-card border rounded-md shadow-lg z-50">
+                          <div className="py-1">
+                            <div className="px-3 py-2 text-sm text-muted-foreground border-b sm:hidden">
+                              {user.user_metadata?.name || user.email}
+                            </div>
                             <button
                               onClick={() => {
-                                window.location.href = '/admin';
+                                setShowProfile(true);
                                 setShowUserDropdown(false);
                               }}
                               className="flex items-center w-full px-3 py-2 text-sm hover:bg-secondary transition-colors"
                             >
-                              <Shield className="w-4 h-4 mr-2" />
-                              Painel Admin
+                              <Settings className="w-4 h-4 mr-2" />
+                              Meu Perfil
                             </button>
-                          )}
-                          <button
-                            onClick={() => {
-                              handleLogout();
-                              setShowUserDropdown(false);
-                            }}
-                            className="flex items-center w-full px-3 py-2 text-sm hover:bg-secondary transition-colors text-destructive"
-                          >
-                            <LogOut className="w-4 h-4 mr-2" />
-                            Sair
-                          </button>
+                            {isAdmin && (
+                              <button
+                                onClick={() => {
+                                  window.location.href = '/admin';
+                                  setShowUserDropdown(false);
+                                }}
+                                className="flex items-center w-full px-3 py-2 text-sm hover:bg-secondary transition-colors"
+                              >
+                                <Shield className="w-4 h-4 mr-2" />
+                                Painel Admin
+                              </button>
+                            )}
+                            <button
+                              onClick={() => {
+                                handleLogout();
+                                setShowUserDropdown(false);
+                              }}
+                              className="flex items-center w-full px-3 py-2 text-sm hover:bg-secondary transition-colors text-destructive"
+                            >
+                              <LogOut className="w-4 h-4 mr-2" />
+                              Sair
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                    )}
-                  </div>
-                  
-                  {isAdmin && (
+                      )}
+                    </div>
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => window.location.href = '/admin'}
+                      onClick={() => window.location.href = '/game'}
                       className="hidden lg:flex"
                     >
-                      <Shield className="w-4 h-4 mr-2" />
-                      Painel Admin
+                      <Target className="w-4 h-4" />
+                      <span>Kisser Game</span>
                     </Button>
-                  )}
-                  
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleAddConnectionClick}
-                  >
-                    <Plus className="w-4 h-4 mr-2" />
-                    <span className="hidden sm:inline">Adicionar</span>
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleAddConnectionClick}
-                  >
-                    <Plus className="w-4 h-4 mr-2" />
-                    <span className="hidden sm:inline">Adicionar</span>
-                  </Button>
-                  
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setShowAuth(true)}
-                  >
-                    <UserIcon className="w-4 h-4 mr-2" />
-                    <span className="hidden sm:inline">Login</span>
-                  </Button>
-                </>
-              )}
+                    
+                    {/* Mobile Game button */}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => window.location.href = '/game'}
+                      className="sm:hidden"
+                    >
+                      <Target className="w-4 h-4" />
+                    </Button>
+                    
+                    {isAdmin && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => window.location.href = '/admin'}
+                        className="hidden lg:flex"
+                      >
+                        <Shield className="w-4 h-4 mr-2" />
+                        Painel Admin
+                      </Button>
+                    )}
+                    
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleAddConnectionClick}
+                    >
+                      <Plus className="w-4 h-4 mr-2" />
+                      <span className="hidden sm:inline">Adicionar</span>
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleAddConnectionClick}
+                    >
+                      <Plus className="w-4 h-4 mr-2" />
+                      <span className="hidden sm:inline">Adicionar</span>
+                    </Button>
+                    
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setShowAuth(true)}
+                    >
+                      <UserIcon className="w-4 h-4 mr-2" />
+                      <span className="hidden sm:inline">Login</span>
+                    </Button>
+                  </>
+                )}
+              </div>
             </div>
           </div>
           
