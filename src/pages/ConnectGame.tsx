@@ -5,7 +5,6 @@ import { Input } from '@/components/ui/input';
 import { 
   Play, 
   RotateCcw, 
-  Trophy, 
   Target, 
   Clock, 
   Users, 
@@ -14,10 +13,9 @@ import {
   XCircle,
   Lightbulb,
   Home,
-  Eye,
-  EyeOff
+  Plus,
+  Trophy
 } from 'lucide-react';
-import cytoscape from 'cytoscape';
 import { supabase } from '@/integrations/supabase/client';
 
 interface Connection {
@@ -36,7 +34,8 @@ interface Name {
 interface GameState {
   startPerson: string;
   targetPerson: string;
-  currentPath: string[];
+  revealedPeople: Set<string>;
+  revealedConnections: Array<{source: string, target: string}>;
   gameStarted: boolean;
   gameWon: boolean;
   gameLost: boolean;
@@ -47,51 +46,37 @@ interface GameState {
   score: number;
 }
 
-interface GameStats {
-  gamesPlayed: number;
-  gamesWon: number;
-  bestTime: number;
-  totalScore: number;
-}
-
 const ConnectGame = () => {
-  const cyRef = useRef<HTMLDivElement>(null);
-  const [cy, setCy] = useState<cytoscape.Core | null>(null);
-  const [showGraph, setShowGraph] = useState(false);
+  const graphRef = useRef<HTMLDivElement>(null);
   
   const [gameState, setGameState] = useState<GameState>({
     startPerson: '',
     targetPerson: '',
-    currentPath: [],
+    revealedPeople: new Set(),
+    revealedConnections: [],
     gameStarted: false,
     gameWon: false,
     gameLost: false,
     attempts: 0,
-    maxAttempts: 50,
+    maxAttempts: 8,
     timeStarted: 0,
     timeElapsed: 0,
     score: 0
   });
 
   const [searchQuery, setSearchQuery] = useState('');
-  const [suggestions, setSuggestions] = useState<string[]>([]);
-  const [gameStats, setGameStats] = useState<GameStats>({
-    gamesPlayed: 0,
-    gamesWon: 0,
-    bestTime: 0,
-    totalScore: 0
-  });
-  const [showHint, setShowHint] = useState(false);
-  const [loading, setLoading] = useState(false);
   const [connections, setConnections] = useState<Connection[]>([]);
   const [names, setNames] = useState<Name[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [hint, setHint] = useState('');
+  const [error, setError] = useState<string | null>(null);
 
   // Fetch data from Supabase
   const fetchData = async () => {
     try {
       setLoading(true);
+      setError(null);
       
-      // Fetch accepted connections
       const { data: connectionsData, error: connectionsError } = await supabase
         .from('connections')
         .select('id, name1, name2, status')
@@ -99,16 +84,17 @@ const ConnectGame = () => {
 
       if (connectionsError) {
         console.error('Error fetching connections:', connectionsError);
+        setError('Erro ao carregar conexões: ' + connectionsError.message);
         return;
       }
 
-      // Fetch all names
       const { data: namesData, error: namesError } = await supabase
         .from('names')
         .select('id, name, instagram');
 
       if (namesError) {
         console.error('Error fetching names:', namesError);
+        setError('Erro ao carregar nomes: ' + namesError.message);
         return;
       }
 
@@ -117,11 +103,13 @@ const ConnectGame = () => {
       
     } catch (error) {
       console.error('Error fetching data:', error);
+      setError('Erro ao conectar com o banco de dados');
     } finally {
       setLoading(false);
     }
   };
 
+  // Load data on component mount
   useEffect(() => {
     fetchData();
   }, []);
@@ -140,159 +128,84 @@ const ConnectGame = () => {
     return () => clearInterval(interval);
   }, [gameState.gameStarted, gameState.gameWon, gameState.gameLost]);
 
-  // Load stats from memory (since localStorage is not available)
-  useEffect(() => {
-    // Initialize with default stats - in a real app, this would come from a database
-    setGameStats({
-      gamesPlayed: 0,
-      gamesWon: 0,
-      bestTime: 0,
-      totalScore: 0
-    });
-  }, []);
+  // Simple graph visualization
+  const renderGraph = () => {
+    if (!gameState.gameStarted) return null;
 
-  // Update Cytoscape graph
-  useEffect(() => {
-    if (!cyRef.current || !showGraph || !gameState.gameStarted) return;
-
-    // Get all people involved in the current game
-    const allPeople = new Set<string>();
-    gameState.currentPath.forEach(person => allPeople.add(person));
-    allPeople.add(gameState.targetPerson);
+    const revealedPeopleArray = Array.from(gameState.revealedPeople);
     
-    // Get connections that might be relevant to the game
-    const relevantConnections = connections.filter(conn => 
-      allPeople.has(conn.name1) || allPeople.has(conn.name2) ||
-      getConnections(gameState.currentPath[gameState.currentPath.length - 1]).includes(conn.name1) ||
-      getConnections(gameState.currentPath[gameState.currentPath.length - 1]).includes(conn.name2)
+    // Create a simple layout
+    const nodePositions = revealedPeopleArray.reduce((acc, person, index) => {
+      const angle = (index / revealedPeopleArray.length) * 2 * Math.PI;
+      const radius = 150;
+      const centerX = 250;
+      const centerY = 200;
+      
+      acc[person] = {
+        x: centerX + Math.cos(angle) * radius,
+        y: centerY + Math.sin(angle) * radius
+      };
+      return acc;
+    }, {} as Record<string, {x: number, y: number}>);
+
+    return (
+      <svg width="500" height="400" className="border rounded bg-white">
+        {/* Draw connections */}
+        {gameState.revealedConnections.map((conn, index) => {
+          const sourcePos = nodePositions[conn.source];
+          const targetPos = nodePositions[conn.target];
+          if (!sourcePos || !targetPos) return null;
+          
+          return (
+            <line
+              key={index}
+              x1={sourcePos.x}
+              y1={sourcePos.y}
+              x2={targetPos.x}
+              y2={targetPos.y}
+              stroke="#059669"
+              strokeWidth="3"
+              opacity="0.8"
+            />
+          );
+        })}
+        
+        {/* Draw nodes */}
+        {revealedPeopleArray.map((person) => {
+          const pos = nodePositions[person];
+          if (!pos) return null;
+          
+          const isStart = person === gameState.startPerson;
+          const isTarget = person === gameState.targetPerson;
+          const color = isStart ? '#3b82f6' : isTarget ? '#8b5cf6' : '#10b981';
+          
+          return (
+            <g key={person}>
+              <circle
+                cx={pos.x}
+                cy={pos.y}
+                r="30"
+                fill={color}
+                stroke={isStart ? '#1d4ed8' : isTarget ? '#7c3aed' : '#059669'}
+                strokeWidth="3"
+              />
+              <text
+                x={pos.x}
+                y={pos.y}
+                textAnchor="middle"
+                dy="0.35em"
+                fill="white"
+                fontSize="12"
+                fontWeight="bold"
+              >
+                {person.split(' ')[0]}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
     );
-
-    // Add people from relevant connections
-    relevantConnections.forEach(conn => {
-      allPeople.add(conn.name1);
-      allPeople.add(conn.name2);
-    });
-
-    const nodes = Array.from(allPeople).map(name => ({
-      data: { 
-        id: name, 
-        label: name,
-        isStart: name === gameState.startPerson,
-        isTarget: name === gameState.targetPerson,
-        isInPath: gameState.currentPath.includes(name),
-        isCurrent: name === gameState.currentPath[gameState.currentPath.length - 1]
-      }
-    }));
-
-    const edges = relevantConnections.map(conn => ({
-      data: {
-        id: `${conn.name1}-${conn.name2}`,
-        source: conn.name1,
-        target: conn.name2,
-        isInPath: (gameState.currentPath.includes(conn.name1) && gameState.currentPath.includes(conn.name2) &&
-                  Math.abs(gameState.currentPath.indexOf(conn.name1) - gameState.currentPath.indexOf(conn.name2)) === 1)
-      }
-    }));
-
-    const cytoscapeInstance = cytoscape({
-      container: cyRef.current,
-      elements: [...nodes, ...edges],
-      style: [
-        {
-          selector: 'node',
-          style: {
-            'background-color': '#e5e7eb',
-            'label': 'data(label)',
-            'text-valign': 'center',
-            'text-halign': 'center',
-            'color': '#374151',
-            'font-size': '12px',
-            'font-weight': 'bold',
-            'width': '60px',
-            'height': '60px',
-            'border-width': '2px',
-            'border-color': '#9ca3af',
-            'text-outline-width': '2px',
-            'text-outline-color': '#ffffff'
-          }
-        },
-        {
-          selector: 'node[isStart = true]',
-          style: {
-            'background-color': '#3b82f6',
-            'border-color': '#1d4ed8',
-            'color': '#ffffff'
-          }
-        },
-        {
-          selector: 'node[isTarget = true]',
-          style: {
-            'background-color': '#8b5cf6',
-            'border-color': '#7c3aed',
-            'color': '#ffffff'
-          }
-        },
-        {
-          selector: 'node[isCurrent = true]',
-          style: {
-            'background-color': '#10b981',
-            'border-color': '#059669',
-            'color': '#ffffff',
-            'border-width': '4px'
-          }
-        },
-        {
-          selector: 'node[isInPath = true]',
-          style: {
-            'background-color': '#f59e0b',
-            'border-color': '#d97706',
-            'color': '#ffffff'
-          }
-        },
-        {
-          selector: 'edge',
-          style: {
-            'width': '2px',
-            'line-color': '#d1d5db',
-            'curve-style': 'bezier',
-            'opacity': 0.6
-          }
-        },
-        {
-          selector: 'edge[isInPath = true]',
-          style: {
-            'line-color': '#f59e0b',
-            'width': '4px',
-            'opacity': 1
-          }
-        }
-      ],
-      layout: {
-        name: 'cose',
-        idealEdgeLength: 80,
-        nodeOverlap: 20,
-        refresh: 20,
-        fit: true,
-        padding: 20,
-        randomize: false,
-        componentSpacing: 40,
-        nodeRepulsion: 100000,
-        edgeElasticity: 100,
-        nestingFactor: 5,
-        gravity: 50,
-        numIter: 1000,
-        initialTemp: 200,
-        coolingFactor: 0.95,
-        minTemp: 1.0
-      }
-    });
-
-    setCy(cytoscapeInstance);
-
-    return () => {
-      cytoscapeInstance.destroy();
-    };
-  }, [showGraph, gameState.currentPath, gameState.startPerson, gameState.targetPerson, connections, gameState.gameStarted]);
+  };
 
   // Find connections for a person
   const getConnections = (personName: string): string[] => {
@@ -309,7 +222,36 @@ const ConnectGame = () => {
     );
   };
 
-  // Find shortest path between two people (for hints and validation)
+  // Check if the graph is connected using the provided connections
+  const isGraphConnected = (revealedConnections: Array<{source: string, target: string}>, startPerson: string, targetPerson: string): boolean => {
+    if (revealedConnections.length === 0) return false;
+    
+    // Use BFS to check if start and target are connected
+    const visited = new Set<string>();
+    const queue = [startPerson];
+    
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      if (visited.has(current)) continue;
+      visited.add(current);
+      
+      if (current === targetPerson) return true;
+      
+      // Find connections in revealed connections
+      revealedConnections.forEach(conn => {
+        if (conn.source === current && !visited.has(conn.target)) {
+          queue.push(conn.target);
+        }
+        if (conn.target === current && !visited.has(conn.source)) {
+          queue.push(conn.source);
+        }
+      });
+    }
+    
+    return false;
+  };
+
+  // Find shortest path
   const findShortestPath = (start: string, target: string): string[] | null => {
     if (start === target) return [start];
     
@@ -339,16 +281,15 @@ const ConnectGame = () => {
   };
 
   // Start new game
-  const startNewGame = async () => {
+  const startNewGame = () => {
     if (loading || connections.length === 0) return;
     
-    // Find two people without direct connection
+    // Find two people with a path between them
     let startPerson = '';
     let targetPerson = '';
     let attempts = 0;
     const maxAttempts = 100;
     
-    // Get all unique names from connections
     const allPeople = new Set<string>();
     connections.forEach(conn => {
       allPeople.add(conn.name1);
@@ -362,9 +303,8 @@ const ConnectGame = () => {
       
       if (randomStart !== randomTarget && 
           !areDirectlyConnected(randomStart, randomTarget)) {
-        // Check if there's at least one path between them
         const path = findShortestPath(randomStart, randomTarget);
-        if (path && path.length > 2 && path.length <= 6) { // Ensure it's challenging but solvable
+        if (path && path.length >= 3 && path.length <= 6) {
           startPerson = randomStart;
           targetPerson = randomTarget;
           break;
@@ -373,135 +313,168 @@ const ConnectGame = () => {
       attempts++;
     }
     
-    // Fallback if no suitable pair found
     if (!startPerson || !targetPerson) {
       if (peopleArray.length >= 2) {
         startPerson = peopleArray[0];
-        targetPerson = peopleArray[peopleArray.length - 1];
+        targetPerson = peopleArray[1];
       } else {
         alert('Não há conexões suficientes para iniciar o jogo!');
         return;
       }
     }
     
+    // Initialize game with only start and target visible
+    const initialPeople = new Set([startPerson, targetPerson]);
+    
     setGameState({
       startPerson,
       targetPerson,
-      currentPath: [startPerson],
+      revealedPeople: initialPeople,
+      revealedConnections: [],
       gameStarted: true,
       gameWon: false,
       gameLost: false,
       attempts: 0,
-      maxAttempts: 6,
+      maxAttempts: 8,
       timeStarted: Date.now(),
       timeElapsed: 0,
       score: 0
     });
     
     setSearchQuery('');
-    setSuggestions([]);
-    setShowHint(false);
+    setHint('');
   };
 
-  // Handle search input
-  const handleSearchChange = (value: string) => {
-    setSearchQuery(value);
-    
-    if (value.trim() && gameState.gameStarted && !gameState.gameWon && !gameState.gameLost) {
-      const currentPerson = gameState.currentPath[gameState.currentPath.length - 1];
-      const personConnections = getConnections(currentPerson);
-      
-      const filtered = personConnections.filter(name =>
-        name.toLowerCase().includes(value.toLowerCase()) &&
-        !gameState.currentPath.includes(name)
-      );
-      
-      setSuggestions(filtered.slice(0, 5));
-    } else {
-      setSuggestions([]);
-    }
-  };
+  // Handle search submission
+  const handleSearch = () => {
+    if (!searchQuery.trim() || gameState.gameWon || gameState.gameLost) return;
 
-  // Add person to path
-  const addPersonToPath = (personName: string) => {
-    const currentPerson = gameState.currentPath[gameState.currentPath.length - 1];
-    
-    // Verify connection exists
-    if (!areDirectlyConnected(currentPerson, personName)) {
-      return; // Invalid move
-    }
-    
-    const newPath = [...gameState.currentPath, personName];
+    const searchName = searchQuery.trim();
     const newAttempts = gameState.attempts + 1;
+
+    console.log('Searching for:', searchName); // Debug log
+
+    // Check if this person exists in our connections
+    const allPeople = new Set<string>();
+    connections.forEach(conn => {
+      allPeople.add(conn.name1);
+      allPeople.add(conn.name2);
+    });
+
+    console.log('All people:', Array.from(allPeople)); // Debug log
+
+    if (!allPeople.has(searchName)) {
+      console.log('Person not found in connections'); // Debug log
+      // Person not found
+      if (newAttempts >= gameState.maxAttempts) {
+        setGameState(prev => ({
+          ...prev,
+          attempts: newAttempts,
+          gameLost: true
+        }));
+      } else {
+        setGameState(prev => ({
+          ...prev,
+          attempts: newAttempts
+        }));
+      }
+      setSearchQuery('');
+      return;
+    }
+
+    console.log('Person found, checking connections...'); // Debug log
+
+    // Find new connections this person has with already revealed people
+    const newConnections: Array<{source: string, target: string}> = [];
+    const newPeople = new Set(gameState.revealedPeople);
     
-    // Check if won
-    if (personName === gameState.targetPerson) {
+    newPeople.add(searchName);
+
+    // Check connections with all revealed people
+    gameState.revealedPeople.forEach(revealedPerson => {
+      if (areDirectlyConnected(searchName, revealedPerson)) {
+        newConnections.push({
+          source: searchName,
+          target: revealedPerson
+        });
+      }
+    });
+
+    console.log('New connections found:', newConnections); // Debug log
+
+    // Update game state
+    const updatedConnections = [...gameState.revealedConnections, ...newConnections];
+    
+    setGameState(prev => ({
+      ...prev,
+      revealedPeople: newPeople,
+      revealedConnections: updatedConnections,
+      attempts: newAttempts
+    }));
+
+    // Check if game is won (start and target are connected)
+    const gameWon = isGraphConnected(updatedConnections, gameState.startPerson, gameState.targetPerson);
+    console.log('Game won?', gameWon); // Debug log
+
+    if (gameWon) {
       const timeBonus = Math.max(0, 300 - Math.floor(gameState.timeElapsed / 1000));
-      const pathBonus = Math.max(0, (6 - newPath.length) * 50);
-      const newScore = 1000 + timeBonus + pathBonus;
+      const attemptsBonus = Math.max(0, (gameState.maxAttempts - newAttempts) * 50);
+      const newScore = 1000 + timeBonus + attemptsBonus;
       
       setGameState(prev => ({
         ...prev,
-        currentPath: newPath,
-        attempts: newAttempts,
         gameWon: true,
         score: newScore
       }));
-      
-      // Update stats
-      setGameStats(prev => ({
-        ...prev,
-        gamesPlayed: prev.gamesPlayed + 1,
-        gamesWon: prev.gamesWon + 1,
-        bestTime: prev.bestTime === 0 ? gameState.timeElapsed : Math.min(prev.bestTime, gameState.timeElapsed),
-        totalScore: prev.totalScore + newScore
-      }));
-      
     } else if (newAttempts >= gameState.maxAttempts) {
-      // Game lost
       setGameState(prev => ({
         ...prev,
-        currentPath: newPath,
-        attempts: newAttempts,
         gameLost: true
       }));
-      
-      setGameStats(prev => ({
-        ...prev,
-        gamesPlayed: prev.gamesPlayed + 1
-      }));
-      
-    } else {
-      // Continue game
-      setGameState(prev => ({
-        ...prev,
-        currentPath: newPath,
-        attempts: newAttempts
-      }));
     }
-    
+
     setSearchQuery('');
-    setSuggestions([]);
+  };
+
+  // Handle Enter key
+  const handleKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      handleSearch();
+    }
   };
 
   // Get hint
   const getHint = () => {
     if (!gameState.gameStarted || gameState.gameWon || gameState.gameLost) return;
-    
-    const currentPerson = gameState.currentPath[gameState.currentPath.length - 1];
-    const personConnections = getConnections(currentPerson);
-    
-    // Find which connection leads to target
-    for (const connection of personConnections) {
-      const pathToTarget = findShortestPath(connection, gameState.targetPerson);
-      if (pathToTarget && pathToTarget.length <= gameState.maxAttempts - gameState.attempts) {
-        setShowHint(true);
-        setTimeout(() => setShowHint(false), 3000);
-        return connection;
+
+    // Find a person who connects to any revealed person and leads toward the target
+    const allPeople = new Set<string>();
+    connections.forEach(conn => {
+      allPeople.add(conn.name1);
+      allPeople.add(conn.name2);
+    });
+
+    for (const person of allPeople) {
+      if (!gameState.revealedPeople.has(person)) {
+        // Check if this person connects to any revealed person
+        const connectsToRevealed = Array.from(gameState.revealedPeople).some(revealed => 
+          areDirectlyConnected(person, revealed)
+        );
+        
+        if (connectsToRevealed) {
+          // Check if this person is on a path to target
+          const pathToTarget = findShortestPath(person, gameState.targetPerson);
+          if (pathToTarget && pathToTarget.length <= gameState.maxAttempts - gameState.attempts + 2) {
+            setHint(`Tente: ${person}`);
+            setTimeout(() => setHint(''), 5000);
+            return;
+          }
+        }
       }
     }
     
-    return personConnections[0] || '';
+    setHint('Não há dicas disponíveis no momento');
+    setTimeout(() => setHint(''), 3000);
   };
 
   const formatTime = (ms: number) => {
@@ -509,8 +482,6 @@ const ConnectGame = () => {
     const minutes = Math.floor(seconds / 60);
     return `${minutes}:${(seconds % 60).toString().padStart(2, '0')}`;
   };
-
-  const hintPerson = showHint ? getHint() : '';
 
   if (loading) {
     return (
@@ -523,264 +494,213 @@ const ConnectGame = () => {
     );
   }
 
+  if (error) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-100 to-pink-100 flex items-center justify-center">
+        <div className="text-center space-y-4">
+          <XCircle className="w-12 h-12 text-red-600 mx-auto" />
+          <p className="text-red-600">{error}</p>
+          <Button onClick={fetchData} variant="outline">
+            <RotateCcw className="w-4 h-4 mr-2" />
+            Tentar Novamente
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-100 to-pink-100 p-4">
-      <div className="max-w-6xl mx-auto space-y-6">
+      <div className="max-w-5xl mx-auto space-y-6">
         {/* Header */}
         <div className="text-center space-y-2">
-          <div className="flex items-center justify-center space-x-2 relative">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => window.history.back()}
-              className="absolute left-0"
-            >
-              <Home className="w-4 h-4 mr-2" />
-              Voltar
-            </Button>
+          <div className="flex items-center justify-center space-x-2">
             <Target className="w-8 h-8 text-purple-600" />
             <h1 className="text-3xl font-bold text-purple-800">Connect Porto Alegre</h1>
           </div>
-          <p className="text-purple-600">Conecte duas pessoas através de relacionamentos em comum!</p>
+          <p className="text-purple-600">Conecte duas pessoas digitando nomes que as ligam!</p>
         </div>
 
-        {/* Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <Card className="p-4 text-center">
-            <div className="text-2xl font-bold text-purple-600">{gameStats.gamesPlayed}</div>
-            <div className="text-sm text-muted-foreground">Jogos</div>
-          </Card>
-          <Card className="p-4 text-center">
-            <div className="text-2xl font-bold text-green-600">{gameStats.gamesWon}</div>
-            <div className="text-sm text-muted-foreground">Vitórias</div>
-          </Card>
-          <Card className="p-4 text-center">
-            <div className="text-2xl font-bold text-blue-600">
-              {gameStats.bestTime > 0 ? formatTime(gameStats.bestTime) : '--'}
-            </div>
-            <div className="text-sm text-muted-foreground">Melhor Tempo</div>
-          </Card>
-          <Card className="p-4 text-center">
-            <div className="text-2xl font-bold text-orange-600">{gameStats.totalScore}</div>
-            <div className="text-sm text-muted-foreground">Pontuação Total</div>
-          </Card>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Game Area */}
-          <Card className="p-6">
-            {!gameState.gameStarted ? (
-              <div className="text-center space-y-6">
-                <div className="space-y-2">
-                  <h2 className="text-2xl font-semibold">Como Jogar</h2>
-                  <div className="text-left max-w-md mx-auto space-y-2 text-sm text-muted-foreground">
-                    <p>• Você receberá duas pessoas que não se tem conexão diretamente</p>
-                    <p>• Seu objetivo é conectá-las através de relacionamentos mútuos</p>
-                    <p>• Digite nomes de pessoas conectadas à pessoa atual</p>
-                    <p>• Pontuação baseada em velocidade e eficiência</p>
-                    <p>• Use o grafo visual para ver as conexões</p>
-                  </div>
+        {/* Game Status */}
+        {gameState.gameStarted && (
+          <Card className="p-4">
+            <div className="flex flex-col md:flex-row justify-between items-center space-y-4 md:space-y-0">
+              <div className="text-center">
+                <div className="text-sm text-muted-foreground">Conectar:</div>
+                <div className="flex items-center space-x-2 text-lg font-semibold">
+                  <span className="text-blue-600">{gameState.startPerson}</span>
+                  <ArrowRight className="w-5 h-5" />
+                  <span className="text-purple-600">{gameState.targetPerson}</span>
                 </div>
-                <Button 
-                  onClick={startNewGame} 
-                  size="lg" 
-                  className="bg-purple-600 hover:bg-purple-700"
-                  disabled={connections.length === 0}
-                >
-                  <Play className="w-5 h-5 mr-2" />
-                  {connections.length === 0 ? 'Sem conexões disponíveis' : 'Iniciar Jogo'}
-                </Button>
-                {connections.length === 0 && (
-                  <p className="text-sm text-muted-foreground">
-                    Ainda não há conexões aprovadas suficientes para jogar.
-                  </p>
-                )}
               </div>
-            ) : (
-              <div className="space-y-6">
-                {/* Game Status */}
-                <div className="flex justify-between items-center text-sm">
-                  <div className="flex items-center space-x-4">
-                    <div className="flex items-center space-x-1">
-                      <Clock className="w-4 h-4" />
-                      <span>{formatTime(gameState.timeElapsed)}</span>
-                    </div>
-                    <div className="flex items-center space-x-1">
-                      <Users className="w-4 h-4" />
-                      <span>{gameState.attempts}/{gameState.maxAttempts}</span>
-                    </div>
-                  </div>
-                  <div className="flex space-x-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setShowGraph(!showGraph)}
-                    >
-                      {showGraph ? <EyeOff className="w-4 h-4 mr-1" /> : <Eye className="w-4 h-4 mr-1" />}
-                      {showGraph ? 'Ocultar' : 'Ver'} Grafo
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => getHint()}
-                      disabled={showHint}
-                    >
-                      <Lightbulb className="w-4 h-4 mr-1" />
-                      Dica
-                    </Button>
-                  </div>
+              
+              <div className="flex items-center space-x-6 text-sm">
+                <div className="flex items-center space-x-1">
+                  <Clock className="w-4 h-4" />
+                  <span>{formatTime(gameState.timeElapsed)}</span>
                 </div>
+                <div className="flex items-center space-x-1">
+                  <Users className="w-4 h-4" />
+                  <span>{gameState.attempts}/{gameState.maxAttempts}</span>
+                </div>
+              </div>
 
-                {/* Game Path */}
-                <div className="space-y-4">
-                  <div className="text-center">
-                    <div className="text-sm text-muted-foreground mb-2">Conecte:</div>
-                    <div className="flex items-center justify-center space-x-2 text-lg font-semibold">
-                      <span className="text-blue-600">{gameState.startPerson}</span>
-                      <ArrowRight className="w-5 h-5 text-muted-foreground" />
-                      <span className="text-purple-600">{gameState.targetPerson}</span>
-                    </div>
-                  </div>
+              <div className="flex space-x-2">
+                <Button onClick={getHint} size="sm" variant="outline">
+                  <Lightbulb className="w-4 h-4 mr-1" />
+                  Dica
+                </Button>
+                <Button onClick={startNewGame} size="sm">
+                  <RotateCcw className="w-4 h-4 mr-1" />
+                  Novo Jogo
+                </Button>
+              </div>
+            </div>
 
-                  {/* Current Path */}
-                  <div className="bg-secondary/50 p-4 rounded-lg">
-                    <div className="text-sm text-muted-foreground mb-2">Caminho atual:</div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      {gameState.currentPath.map((person, index) => (
-                        <div key={index} className="flex items-center">
-                          <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-                            index === 0 ? 'bg-blue-100 text-blue-700' :
-                            person === gameState.targetPerson ? 'bg-purple-100 text-purple-700' :
-                            index === gameState.currentPath.length - 1 ? 'bg-green-100 text-green-700' :
-                            'bg-yellow-100 text-yellow-700'
-                          }`}>
-                            {person}
-                          </span>
-                          {index < gameState.currentPath.length - 1 && (
-                            <ArrowRight className="w-4 h-4 mx-2 text-muted-foreground" />
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
+            {/* Hint */}
+            {hint && (
+              <div className="mt-3 text-center p-2 bg-yellow-50 border border-yellow-200 rounded text-yellow-800">
+                💡 {hint}
+              </div>
+            )}
 
-                  {/* Search Input */}
-                  {!gameState.gameWon && !gameState.gameLost && (
-                    <div className="space-y-2">
-                      <div className="text-sm text-muted-foreground">
-                        Quem {gameState.currentPath[gameState.currentPath.length - 1]} conhece?
-                        {showHint && hintPerson && (
-                          <span className="ml-2 text-orange-600 font-medium">
-                            💡 Tente: {hintPerson}
-                          </span>
-                        )}
-                      </div>
-                      <Input
-                        value={searchQuery}
-                        onChange={(e) => handleSearchChange(e.target.value)}
-                        placeholder="Digite o nome de uma pessoa..."
-                        className="text-lg"
-                      />
-                      
-                      {/* Suggestions */}
-                      {suggestions.length > 0 && (
-                        <div className="grid gap-2">
-                          {suggestions.map((suggestion) => (
-                            <Button
-                              key={suggestion}
-                              variant="outline"
-                              onClick={() => addPersonToPath(suggestion)}
-                              className="justify-start"
-                            >
-                              {suggestion}
-                            </Button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
+            {/* Game End Messages */}
+            {gameState.gameWon && (
+              <div className="mt-4 text-center space-y-2 p-4 bg-green-50 rounded-lg border border-green-200">
+                <CheckCircle className="w-12 h-12 text-green-600 mx-auto" />
+                <h3 className="text-xl font-bold text-green-800">Parabéns! 🎉</h3>
+                <p className="text-green-700">Você conectou {gameState.startPerson} e {gameState.targetPerson}!</p>
+                <div className="text-lg font-semibold text-green-800">
+                  Pontuação: {gameState.score} pontos
+                </div>
+                <div className="text-sm text-green-600">
+                  Tempo: {formatTime(gameState.timeElapsed)} | Tentativas: {gameState.attempts}
+                </div>
+              </div>
+            )}
 
-                  {/* Game End Messages */}
-                  {gameState.gameWon && (
-                    <div className="text-center space-y-4 p-6 bg-green-50 rounded-lg border border-green-200">
-                      <CheckCircle className="w-16 h-16 text-green-600 mx-auto" />
-                      <div className="space-y-2">
-                        <h3 className="text-2xl font-bold text-green-800">Parabéns! 🎉</h3>
-                        <p className="text-green-700">
-                          Você conectou {gameState.startPerson} e {gameState.targetPerson}!
-                        </p>
-                        <div className="text-lg font-semibold text-green-800">
-                          Pontuação: {gameState.score} pontos
-                        </div>
-                        <div className="text-sm text-green-600">
-                          Tempo: {formatTime(gameState.timeElapsed)} | Passos: {gameState.currentPath.length - 1}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {gameState.gameLost && (
-                    <div className="text-center space-y-4 p-6 bg-red-50 rounded-lg border border-red-200">
-                      <XCircle className="w-16 h-16 text-red-600 mx-auto" />
-                      <div className="space-y-2">
-                        <h3 className="text-2xl font-bold text-red-800">Game Over</h3>
-                        <p className="text-red-700">
-                          Não foi possível conectar {gameState.startPerson} e {gameState.targetPerson}
-                        </p>
-                        <div className="text-sm text-red-600">
-                          Tentativas esgotadas: {gameState.attempts}/{gameState.maxAttempts}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Action Buttons */}
-                  {(gameState.gameWon || gameState.gameLost) && (
-                    <div className="flex justify-center space-x-4">
-                      <Button onClick={startNewGame} className="bg-purple-600 hover:bg-purple-700">
-                        <RotateCcw className="w-4 h-4 mr-2" />
-                        Novo Jogo
-                      </Button>
-                    </div>
-                  )}
+            {gameState.gameLost && (
+              <div className="mt-4 text-center space-y-2 p-4 bg-red-50 rounded-lg border border-red-200">
+                <XCircle className="w-12 h-12 text-red-600 mx-auto" />
+                <h3 className="text-xl font-bold text-red-800">Game Over</h3>
+                <p className="text-red-700">
+                  Não foi possível conectar {gameState.startPerson} e {gameState.targetPerson}
+                </p>
+                <div className="text-sm text-red-600">
+                  Tentativas esgotadas: {gameState.attempts}/{gameState.maxAttempts}
                 </div>
               </div>
             )}
           </Card>
+        )}
 
-          {/* Graph Visualization */}
-          {showGraph && gameState.gameStarted && (
-            <Card className="p-4">
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-lg font-semibold">Visualização da Rede</h3>
-                  <div className="text-xs text-muted-foreground space-y-1">
-                    <div className="flex items-center space-x-2">
-                      <div className="w-3 h-3 bg-blue-500 rounded"></div>
-                      <span>Início</span>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <div className="w-3 h-3 bg-purple-500 rounded"></div>
-                      <span>Objetivo</span>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <div className="w-3 h-3 bg-green-500 rounded"></div>
-                      <span>Atual</span>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <div className="w-3 h-3 bg-yellow-500 rounded"></div>
-                      <span>Caminho</span>
-                    </div>
-                  </div>
-                </div>
-                <div
-                  ref={cyRef}
-                  className="w-full h-[500px] bg-gradient-to-br from-secondary/20 to-background border rounded-lg"
-                />
+        {/* Start Game Button */}
+        {!gameState.gameStarted && (
+          <div className="text-center space-y-4">
+            <div className="bg-white p-6 rounded-lg shadow-sm border max-w-md mx-auto">
+              <h3 className="text-lg font-semibold mb-3">Como Jogar</h3>
+              <div className="text-left space-y-2 text-sm text-muted-foreground">
+                <p>• Você verá duas pessoas que não estão conectadas</p>
+                <p>• Digite nomes de pessoas que conhecem uma das duas</p>
+                <p>• Continue até formar um caminho entre elas</p>
+                <p>• Cuidado com o limite de tentativas!</p>
               </div>
-            </Card>
-          )}
-        </div>
+            </div>
+            <Button 
+              onClick={startNewGame} 
+              size="lg" 
+              className="bg-purple-600 hover:bg-purple-700"
+              disabled={connections.length === 0}
+            >
+              <Play className="w-5 h-5 mr-2" />
+              {connections.length === 0 ? 'Sem conexões disponíveis' : 'Iniciar Jogo'}
+            </Button>
+          </div>
+        )}
+
+        {/* Game Graph */}
+        {gameState.gameStarted && (
+          <Card className="p-6">
+            <div className="flex justify-center">
+              {renderGraph()}
+            </div>
+            
+            {/* Legend */}
+            <div className="mt-4 flex flex-wrap items-center justify-center gap-4 text-sm">
+              <div className="flex items-center space-x-2">
+                <div className="w-4 h-4 bg-blue-500 rounded border-2 border-blue-700"></div>
+                <span>Início ({gameState.startPerson})</span>
+              </div>
+              <div className="flex items-center space-x-2">
+                <div className="w-4 h-4 bg-purple-500 rounded border-2 border-purple-700"></div>
+                <span>Objetivo ({gameState.targetPerson})</span>
+              </div>
+              <div className="flex items-center space-x-2">
+                <div className="w-4 h-4 bg-green-500 rounded border-2 border-green-700"></div>
+                <span>Pessoas reveladas</span>
+              </div>
+            </div>
+          </Card>
+        )}
+
+        {/* Search Bar */}
+        {gameState.gameStarted && !gameState.gameWon && !gameState.gameLost && (
+          <Card className="p-6">
+            <div className="text-center space-y-4">
+              <h3 className="text-lg font-semibold">
+                Digite o nome de alguém que conecta as pessoas no grafo:
+              </h3>
+              <div className="max-w-md mx-auto flex space-x-2">
+                <Input
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyPress={handleKeyPress}
+                  placeholder="Digite o nome completo..."
+                  className="text-lg"
+                />
+                <Button onClick={handleSearch} className="bg-green-600 hover:bg-green-700">
+                  <Plus className="w-4 h-4 mr-2" />
+                  Adicionar
+                </Button>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Pessoas reveladas: {gameState.revealedPeople.size} | 
+                Conexões: {gameState.revealedConnections.length}
+              </p>
+            </div>
+          </Card>
+        )}
+
+        {/* Statistics */}
+        <Card className="p-4">
+          <div className="text-center space-y-2">
+            <h3 className="text-lg font-semibold">Estatísticas da Rede</h3>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+              <div>
+                <div className="text-2xl font-bold text-purple-600">{connections.length}</div>
+                <div className="text-muted-foreground">Conexões</div>
+              </div>
+              <div>
+                <div className="text-2xl font-bold text-blue-600">
+                  {new Set([...connections.map(c => c.name1), ...connections.map(c => c.name2)]).size}
+                </div>
+                <div className="text-muted-foreground">Pessoas</div>
+              </div>
+              <div>
+                <div className="text-2xl font-bold text-green-600">
+                  {connections.length > 0 ? Math.round((connections.length * 2) / new Set([...connections.map(c => c.name1), ...connections.map(c => c.name2)]).size * 10) / 10 : 0}
+                </div>
+                <div className="text-muted-foreground">Conexões/Pessoa</div>
+              </div>
+              <div>
+                <div className="text-2xl font-bold text-orange-600">
+                  {names.filter(n => n.instagram).length}
+                </div>
+                <div className="text-muted-foreground">Com Instagram</div>
+              </div>
+            </div>
+          </div>
+        </Card>
       </div>
     </div>
   );
